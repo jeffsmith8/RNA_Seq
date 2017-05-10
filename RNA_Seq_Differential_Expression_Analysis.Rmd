@@ -1,0 +1,295 @@
+---
+title: "RNA_Seq_Differential_Expression_Analysis"
+output:
+  html_document: default
+  pdf_document: default
+---
+A. Load Relevant R Packages.
+
+```{r}
+# To conduct statistical analyses
+library(ballgown)
+
+# For setting up colours
+library(RSkittleBrewer)
+
+# For fast calculation of means and variances
+library(genefilter)
+
+# For sorting and arranging results
+library(dplyr)
+
+#For reproducinility and installing packages
+library(devtools)
+```
+
+B. Read in filtered Ballgown expression data to variables
+NB: Ballgown supports reading data from StringTie, Cufflinks, and RSEM.
+
+```{r}
+## Below line is only necessary for preserving decent formatting in tables called from terminal
+# options(width=as.integer(system("stty -a | head -n 1 | awk '{print $7}' | sed 's/;//'", intern=T)))
+
+# Set working directory for R
+setwd('/home/jeff/RNA_Seq/training')
+
+# Assign sample descriptions
+pheno_data = read.csv("./chrX_data/geuvadis_phenodata.csv")
+
+# Read in expression data for each sample in the ballgown folder (sample.gtf). Create ballgown object.
+bg_chrX = ballgown(dataDir = "ballgown", samplePattern = "ERR", pData=pheno_data)
+
+# Filter out low-abundance genes. Here we remove all transcripts with a variance across samples <1
+bg_chrX_filt = subset(bg_chrX,"rowVars(texpr(bg_chrX)) >1",genomesubset=TRUE)
+
+```
+
+C. Analyse transcript data for statistically significant changes.
+1. Generate table, sort by q value.
+NB: The stattest is a standard linear model-based comparison. For small sample sizes (n < 4 per group), it is often better to perform regularization. This can be done using the limma package in Bioconductor. 
+Other regularized methods such as DESeq 23 and edgeR 20 can be applied to gene or exon counts, but they are not appropriate for direct application to FPKM abundance estimates. 
+The statistical test uses a cumulative upper quartile normalization.
+NB: 'id = list index, 'fc' = fold change
+NB: Why do some geneIDs not have gene names? is this 'discovery'?
+NB: The fold change is ratio females to males. But how do I know this? How does it decide? alphabetically? i.e. F < M ?
+NB: I suppose once you have a csv you can switch read the data into python.
+
+```{r}
+# Identify transcripts that show statistically significant differences between groups. 
+# Here we look at differences (covariate) between sexes and report log2 fold change (getFC) while correcting for differeces to to the population variable (adjustvars = c())
+# FPKM = "Fragments per million reads", a standard measure for RNA_seq data
+results_transcripts = stattest(bg_chrX_filt, feature="transcript",covariate="sex",adjustvars = c("population"), getFC=TRUE, meas="FPKM")
+
+# Here we convert the results_transcripts variable into a data frame. While data.frame(result_transcripts) will work..... 
+# geneNames=ballgown::geneNames(bg_chrX_filt) will create a column variable 'geneNames' and populate it with matches from filtered expression data (calling ballgown function geneNames, presumably just list matching). Why did the authors create a variable that has the same name as a function I don't know.
+results_transcripts = data.frame(geneNames=ballgown::geneNames(bg_chrX_filt), geneIDs=ballgown::geneIDs(bg_chrX_filt),transcript=ballgown::transcriptNames(bg_chrX_filt), results_transcripts)
+
+# Sort the data frame by pval.
+results_transcripts = arrange(results_transcripts,pval)
+
+# Display results with qval<0.05
+subset(results_transcripts,results_transcripts$qval<0.05)
+```
+
+2. Write transcript differential analysis to csv.
+
+```{r}
+# Write transcript results to csv
+write.csv(results_transcripts, "analysis/chrX_transcript_results.csv", row.names=FALSE)
+```
+
+3. How about filtering out the transcripts which have no id match?
+NB: Not much point doing this? You;d just end up with the genes results and miss all the predicted transcript isoforms?
+NB: But then, it would be nice just to return known transcripts.
+
+```{r}
+# Filter out transcript results that lack a gene name and transcript. why does ballgown put a 0 in there it's so annoying!!
+
+```
+
+E. Analyse gene data for statistically significant changes
+1. Generate table, sort by q value.
+NB: How can I show gene name?
+NB: Why is id here different to the transcript table? Maybe I just have to alter the 
+
+```{r}
+# Identify genes that show statistically significant differences between groups. 
+results_genes = stattest(bg_chrX_filt, feature="gene", covariate="sex", adjustvars = c("population"), getFC=TRUE, meas="FPKM")
+results_genes = arrange(results_genes,pval)
+subset(results_genes,results_genes$qval<0.05)
+```
+
+2. Write gene differential analysis to csv.
+
+```{r}
+# Write gene results to csv
+write.csv(results_genes, "analysis/chrX_gene_results.csv", row.names=FALSE)
+```
+
+
+3. Here is one way to add the gene names
+```{r}
+# THIS CODE MAY BE A HACK THAT ISNT COMPATOBLE WIH BALLGOWN OBJECT CREATION
+
+# get the mapping relationship between gene symbols and gene ids
+genename_ids <- dplyr::filter(results_transcripts, geneNames!=".") %>% dplyr::distinct(geneNames, geneIDs)
+# join them by gene ids.
+results_genes_withnames <- dplyr::left_join(results_genes, genename_ids, by=c("id"="geneIDs"))
+
+# Sort object
+results_genes_withnames = arrange(results_genes_withnames,pval)
+
+# Display subset
+subset(results_genes_withnames,results_genes_withnames$qval<.05)
+
+# Write gene results to csv
+write.csv(results_genes_withnames, "analysis/chrX_gene_results_withnames.csv", row.names=FALSE)
+
+```
+
+4. Let's adapt the above to remove all the genes that don't have a match
+
+```{r}
+# Omit empty values from subset
+na.omit(subset(results_genes_withnames,results_genes_withnames$qval<.05))
+
+# Write gene results to csv
+results_genes_withnames_filt=na.omit(subset(results_genes_withnames,results_genes_withnames$qval<.05))
+
+write.csv(results_genes_withnames_filt, "analysis/chrX_gene_results_withnames.csv", row.names=FALSE)
+
+```
+
+######################################################################################################################################################################################################################################################################################
+THIS CODE DOESNT WORK WELL
+
+```{r}
+# Filter out low-abundance genes. Here we remove all transcripts with a variance across samples <1
+bg_chrX_filt = subset(bg_chrX,"rowVars(texpr(bg_chrX)) >1",genomesubset=TRUE)
+
+# gene_expression = gexpr(bg_chrX_filt)
+# results_genes_alt = stattest(bg_chrX_filt, gexpr=gene_expression,feature='gene', covariate='sex', adjustvars = c("population"), getFC=TRUE, meas="FPKM")
+
+# I adapted the code below (suggested by Frazee)- but it doesn't seem to assign gene names as well as the above.
+results_genes_alt = stattest(bg_chrX_filt, feature='gene', covariate='sex', adjustvars = c("population"), getFC=TRUE, meas="FPKM")
+
+indices = match(results_genes_alt$id, texpr(bg_chrX, 'all')$gene_id)
+gene_names_for_result = texpr(bg_chrX, 'all')$gene_name[indices]
+
+results_genes_alt = data.frame(geneNames=gene_names_for_result, results_genes_alt)
+results_genes_alt = arrange(results_genes_alt,pval)
+subset(results_genes_alt,results_genes_alt$qval<0.05)
+
+```
+
+######################################################################################################################################################################################################################################################################################
+
+F.Show the distribution of gene abundances (measured as FPKM values) across samples, colored by covariate (below orange = female, blue = male)
+NB: Why is the first letter of the axis labels cut off?
+NB: I presume this just lets you see if you had similar numbers of fragments read for each person, and whether there might be any difference by sex.
+
+```{r}
+# Set pallette vairables- but why the extra colours?
+tropical= c('darkorange', 'dodgerblue', 'hotpink', 'limegreen', 'yellow')
+palette(tropical)
+
+# Set fpkm variable- extract measurement from ballgown object
+fpkm = texpr(bg_chrX,meas="FPKM")
+
+# Adjust fpkm to log2 (why not log10?)
+fpkm = log2(fpkm+1)
+
+# Call boxplot, columns as covariate sex from pheno_data, set labels. Don'know what las=2 means (maybe line width, or label something?)
+boxplot(fpkm,col=as.numeric(pheno_data$sex),las=2,ylab='log2(FPKM+1)')
+
+```
+
+G. Make plots of individual transcripts across samples. 
+NB: For example, here we show how to create a plot for the 1st transcript in the data set
+NB: How do I find the gene list and its correct order? I could query and return this value in python, but in R......?
+
+```{r}
+# Prints list index[] to console
+ballgown::transcriptNames(bg_chrX)[1635]
+
+# Prints list index[] to console
+ballgown::geneNames(bg_chrX)[1635]
+
+# Create boxplot
+plot(fpkm[1635,] ~ pheno_data$sex, border=c(1,2), main=paste(ballgown::geneNames(bg_chrX)[1635],' : ', ballgown::transcriptNames(bg_chrX)[1635]),pch=19, xlab="Sex", ylab='log2(FPKM+1)')
+
+# Add individual data points to box plot
+points(fpkm[1635,] ~ jitter(as.numeric(pheno_data$sex)), col=as.numeric(pheno_data$sex))
+```
+
+H. Plot the structure and expression levels in a sample of all transcripts that share the same gene locus (isoform analysis?).
+NB: The list index is gicen in the transcript table above
+NB: Why you would care about this I don't know. Maybe to explore isoform differences?
+
+```{r}
+plotTranscripts(ballgown::geneIDs(bg_chrX)[1635], bg_chrX, main=c('Gene XIST in sample ERR188234'), sample=c('ERR188234'))
+```
+
+I. Plot the average expression levels for all transcripts of a gene within different groups
+
+```{r}
+plotMeans('MSTRG.515', bg_chrX_filt,groupvar="sex",legend=TRUE)
+```
+
+J. At this point I would like to try the tools used by the Smythe group for my training analysis.
+This will require installation of:
+RSubread
+limma
+edgeR
+openxlsx
+
+1. Install RSubread. 
+NB: I'll probably keep using hisat2 as the alignment results should be similar- but hisat2 is faster and requires less memory.
+NB: There were a lot of warnings in the install- presumably ones written in by the package authors themselves
+
+```{r}
+source("https://bioconductor.org/biocLite.R")
+biocLite("Rsubread")
+```
+
+2. Install limma
+This stats package is necessary for analysis of small sample sizes such as those in experimentla studies.
+NB: limma was already installed, maybe as part of bioconductor core.
+
+3. Install Statmod
+This is required for some more advanced limma functions, it can be installed most easily from conda bash
+
+```{bash}
+conda install -c bioconda r-statmod=1.4.22
+```
+
+4. Install edgeR
+Another package for Empirical Analysis of Digital Gene Expression Data in R.
+```{r}
+source("https://bioconductor.org/biocLite.R")
+biocLite("edgeR")
+```
+
+5. Install openxlsx: To Read, Write and Edit XLSX Files
+I've installed this via the r command line as below.
+NB: This package is not available as a bioconductor install, I'll try to install it in the conda environment
+NB: I couldnt get it done via conda using https://www.continuum.io/content/conda-data-science "Building a conda R package"
+
+
+```{r}
+install.packages("openxlsx", dependencies=TRUE)
+```
+
+###################
+
+K. IGNORE THIS ROUTE- LIMMA CAN RUN ON BALLGOWN OBJECT........
+WORK ON THIS ROUTE TO COMPARE ANNOTATION EFFICIENCY BETWEEN FEATURECOUNTS AND STRINGTIE
+Back in my Hisat2 training file "training/RNA_Seq_Alignment_Assembly.Rmd" I generated sam files using hisat2, then converted them to bam using samtools at step C.2.
+I then proceeded to StringTie to generate gtf files. I'm going to assume bam files are all standard, and that I can pick up the c.2. bam files and proceed with quantification by 
+
+set up featurecounts- THIS LOOKS LIKE SOMETHING....ignroe this route 
+
+
+```{r}
+setwd('/home/jeff/RNA_Seq/training')
+length(bam <- dir(pattern="bam"))
+read <- unique(unlist(lapply(strsplit(bam, "_"), function(x) paste(x[1],x[2], sep="_"))))
+OutputBAM <- paste0(read,"_chrX.BAM")
+OutputBAM
+```
+
+##################
+
+L. 
+
+
+```{r}
+setwd('/home/jeff/RNA_Seq/training')
+
+library(knitr)
+opts_chunk$set(error=FALSE, prompt=TRUE, comment=NA)
+rm(list=ls()); options(digits = 3, width = 200)
+targets <- read.csv("chrX_data/targets.csv")
+targets
+```
+
