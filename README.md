@@ -1,1 +1,1 @@
-# RNA_Seq_Training
+# RNA_Seq
